@@ -1,0 +1,9 @@
+mid-level
+soft lines
+low
+yes, grayscale
+shades of gray
+yes
+no
+yes, painting
+yes, realistic

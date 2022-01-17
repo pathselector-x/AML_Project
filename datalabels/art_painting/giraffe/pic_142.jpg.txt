@@ -1,0 +1,9 @@
+low-level
+no edges, just patches of colors
+mid
+yes, colorful
+white with a blue splash
+no, 2
+yes, sparse
+yes, painting
+no, unrealistic
