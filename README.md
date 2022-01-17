@@ -1,5 +1,45 @@
 # Advanced Machine Learning Project - Domain-To-Text 
 
+### Assignment submission by:
+### - 291018
+### - 287639
+### - 282870
+
+# General Info
+
+## PACS path
+
+Make sure PACS folder is in this directory
+
+## Pretrained models
+
+In order to reproduce the values reported in the table, you have to download the pretrained models from this link: https://drive.google.com/drive/folders/17tWDDDPY9fRLrnL3YbwkHrilq12oii2M?usp=sharing
+
+Then, you have to put the "outputs" folder in this directory
+
+## Torch "bug"
+
+For some reason torch==1.4.0 is too old to pull pretrained models from pytorch hub, so we used torch==1.9.0 (which comes with torchvision==0.10.0 and has CUDA 10.2 support). The rest of the requirements (specified in *_requirements.txt_*) are fine.
+
+## Data labels
+Labels containing visual descriptions of the appearance and the style of each image are in *_datalabels_* folder (each text file is a label, the path to each text file mimics the path of the corresponding image in the PACS folder). Each label describes in order:
+```
+Level of details
+Edges
+Color saturation
+Color shades
+Background
+Single instance
+Text
+Texture
+Perspective
+```
+
+## Finetuned model weights with the new dataset
+TODO
+
+# Original README
+
 Basic code to reproduce the baselines (point 1 of the project). 
 
 ## Dataset
