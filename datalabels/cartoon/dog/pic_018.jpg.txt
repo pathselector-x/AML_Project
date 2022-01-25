@@ -1,0 +1,9 @@
+low-level
+solid bold black lines
+low
+no
+white
+yes
+yes, sparse
+no
+no, unrealistic

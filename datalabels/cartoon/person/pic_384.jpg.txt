@@ -1,0 +1,8 @@
+low-level
+solid lines
+mid
+yes, colorful
+colored 
+no, 10
+yes, dense
+yes, cartoon

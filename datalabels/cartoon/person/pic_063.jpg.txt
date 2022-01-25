@@ -1,0 +1,9 @@
+low-level
+soft lines
+high
+yes, colorful
+blue
+no, 2
+yes, dense
+yes, cartoon
+no, unrealistic

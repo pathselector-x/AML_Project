@@ -1,0 +1,9 @@
+mid-level
+solid bold black lines
+mid
+yes, colorful
+white
+yes
+yes, sparse
+no
+yes, realistic

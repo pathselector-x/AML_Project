@@ -1,0 +1,9 @@
+low-level
+bold black lines
+high
+yes, colorful
+white
+yes
+yes, sparse
+yes, cartoon
+no, unrealistic

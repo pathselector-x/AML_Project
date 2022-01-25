@@ -1,0 +1,9 @@
+low-level
+solid bold lines
+mid
+no
+white
+yes
+no
+yes, cartoon
+no, unrealistic

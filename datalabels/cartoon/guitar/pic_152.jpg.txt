@@ -1,0 +1,9 @@
+mid-level
+soft lines
+mid
+yes, grayscale
+white
+yes
+no
+yes, cartoon
+yes, realistic

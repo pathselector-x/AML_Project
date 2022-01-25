@@ -1,0 +1,9 @@
+mid-level
+solid lines
+mid
+yes, colorful
+white
+no, 2
+yes, sparse
+yes, cartoon
+yes, realistic

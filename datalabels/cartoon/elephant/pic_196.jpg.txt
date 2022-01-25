@@ -1,0 +1,9 @@
+low-level
+solid black lines
+low
+yes, grayscale
+white 
+yes
+yes, sparse
+yes, cartoon
+no, unrealistic
