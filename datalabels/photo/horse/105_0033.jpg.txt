@@ -1,0 +1,9 @@
+mid-level
+precise lines
+low
+yes, grayscale
+white with some shades of gray
+yes
+yes, sparse text
+no
+yes, realistic

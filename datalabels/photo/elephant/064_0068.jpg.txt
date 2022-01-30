@@ -1,0 +1,9 @@
+low-level
+indefinite lines
+low
+yes, grayscale
+white with some shades of gray
+no, 2
+no
+no
+yes, realistic
