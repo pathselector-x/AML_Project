@@ -16,15 +16,14 @@ def cosine_sim(a,b):
 
 #! Data Loading
 class TrainDataset(torch.utils.data.Dataset):
-    def __init__(self, images_path, annotations_path, annotations, model):
-        self.model = model
+    def __init__(self, images_path, annotations_path, annotations):
         self.img_transformer = get_transform()
         self.indexes = {'art_painting': [], 'cartoon': [], 'photo': [], 'sketch': []}
         self.images = []
         self.descr = []
         idx = 0
         for path in annotations:
-            self.images.append(self.img_transformer(Image.open(images_path + path).convert('RGB')))
+            self.images.append(self.img_transformer(Image.open(images_path + path.split('.txt')[0]).convert('RGB')))
             with open(annotations_path + path, 'r') as f:
                 self.descr.append(f.read())
             if 'art_painting' in path: self.indexes['art_painting'].append(idx)
@@ -39,28 +38,20 @@ class TrainDataset(torch.utils.data.Dataset):
         key = ['art_painting', 'cartoon', 'photo', 'sketch'][index]
         idx_positive = random.choice(self.indexes[key])
         pos_img, pos_txt = self.images[idx_positive], self.descr[idx_positive] # (I+, P+)
-
+        
         # Negative
         other_visual_domains = list(set(['art_painting', 'cartoon', 'photo', 'sketch']) - set([key]))
-        neg_img = None
-        max_sim_img = None
-        neg_txt = None
-        max_sim_txt = None
-        with torch.no_grad():
-            for domain in other_visual_domains:
-                for idx in self.indexes[domain]:
-                    sim_img = cosine_sim(self.model.img_encoder(pos_img), self.model.img_encoder(self.images[idx]))
-                    if max_sim_img is None or sim_img > max_sim_img:
-                        neg_img = self.images[idx]
-                        max_sim_img = sim_img
-                    sim_txt = cosine_sim(self.model.lang_encoder(pos_txt), self.model.lang_encoder(self.descr[idx]))
-                    if max_sim_txt is None or sim_txt > max_sim_txt:
-                        neg_txt = self.descr[idx]
-                        max_sim_txt = sim_txt
+        other_key1 = random.choice(other_visual_domains)
+        other_key2 = random.choice(other_visual_domains)
+        idx_neg_img = random.choice(self.indexes[other_key1])
+        idx_neg_txt = random.choice(self.indexes[other_key2])
+        neg_img = self.images[idx_neg_img]
+        neg_txt = self.descr[idx_neg_txt]
+
         return (pos_img, pos_txt, neg_img, neg_txt, key)
 
     def __len__(self):
-        return len(self.images)
+        return 6000000
     
 class EvalDataset(torch.utils.data.Dataset): # both for validation, test -> return (pos_img, pos_txt)
     def __init__(self, images_path, annotations_path, annotations):
@@ -70,7 +61,7 @@ class EvalDataset(torch.utils.data.Dataset): # both for validation, test -> retu
         self.descr = []
         idx = 0
         for path in annotations:
-            self.images.append(self.img_transformer(Image.open(images_path + path).convert('RGB')))
+            self.images.append(self.img_transformer(Image.open(images_path + path.split('.txt')[0]).convert('RGB')))
             with open(annotations_path + path, 'r') as f:
                 self.descr.append(f.read())
             if 'art_painting' in path: self.indexes['art_painting'].append(idx)
@@ -86,7 +77,7 @@ class EvalDataset(torch.utils.data.Dataset): # both for validation, test -> retu
         elif index in self.indexes['photo']: label = 'photo'
         elif index in self.indexes['sketch']: label = 'sketch'
         return (img, txt, label)
-        
+
     def __len__(self):
         return len(self.images)
 
@@ -197,17 +188,17 @@ def compute_mAP(match_scores, gt_matrix, mode='i2p'):
     # calculate mAP
     return mean_average_precision(retrieve_binary_lists)
 
-def plot_clouds():
-    BATCH_SIZE = 1
+def test():
     model_path = 'metric_learning/weights.pth'
 
     # Load data from path
     images_path = 'PACS/kfold/'
     annotations_path = 'datalabels/'
 
+    _, _, test_txt = train_val_test_split('datalabels/')
+
     print('Starting to load data...')
-    dataset = Dataset(images_path, annotations_path, get_transform())
-    dataset_source = torch.utils.data.DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, num_workers=1, pin_memory=True, drop_last=False)
+    testset = EvalDataset(images_path, annotations_path, test_txt)
     
     # Init model for metric learning
     print('Loading model...')
@@ -218,28 +209,17 @@ def plot_clouds():
         model.load_state_dict(torch.load(model_path), strict=False)
     model.eval()
 
-    xs, ys, lbls = [], [], []
+    match_scores = np.zeros((len(testset), len(testset)))
+    gt_matrix = np.eye(len(testset))
 
-    print('Start evaluation...')
-    for it, (img, txt, neg_img, neg_txt, lbl) in enumerate(tqdm(dataset_source)):
-        ie = model.img_encoder(img.cuda())
-        te =  model.lang_encoder(txt)
-        x = torch.linalg.svdvals(ie).detach().cpu().numpy()[0]
-        y = torch.linalg.svdvals(te).detach().cpu().numpy()[0]
-        xs.append(x)
-        ys.append(y)
-        lbls.append(lbl)
-
-        if it == 2000: break
-    
-    xs, ys, lbls = np.array(xs), np.array(ys), np.array(lbls)
-
-    plt.scatter(xs[lbls == 0], ys[lbls == 0], c='r')
-    plt.scatter(xs[lbls == 1], ys[lbls == 1], c='g')
-    plt.scatter(xs[lbls == 2], ys[lbls == 2], c='c')
-    plt.scatter(xs[lbls == 3], ys[lbls == 3], c='b')
-    plt.grid()
-    plt.show()
+    for i, (img_i, _, _) in enumerate(testset):
+        for j, (_, txt_j, _) in enumerate(testset):
+            match_scores[i,j] = cosine_sim(model.img_encoder(img_i.cuda()).cpu(), model.lang_encoder(txt_j).cpu())
+            
+    mAP_img = compute_mAP(match_scores, gt_matrix, mode='i2p')
+    mAP_txt = compute_mAP(match_scores, gt_matrix, mode='p2i')
+    print(f'mAP_img: {mAP_img:.5f}, mAP_txt: {mAP_txt:.5f}, AVG: {((mAP_img + mAP_txt) / 2):.5f}')
+    #TODO: qualche grafico 'interessante'
 
 def MLTLoss(ie, te, nie, nte, BATCH_SIZE):
     positive_norm = torch.pow(torch.norm(ie - te, p=2), 2)
@@ -277,7 +257,12 @@ def train(eps_improving=0.0005, save_every=50, use_tensorboard=True):
     images_path = 'PACS/kfold/'
     annotations_path = 'datalabels/'
 
-    train_txt, val_txt, test_txt = train_val_test_split('datalabels/')
+    train_txt, val_txt, _ = train_val_test_split('datalabels/')
+    print('Starting to load data...')
+    trainset = TrainDataset(images_path, annotations_path, train_txt)
+    trainset_source = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=False, num_workers=0, pin_memory=True, drop_last=False)
+
+    valset = EvalDataset(images_path, annotations_path, val_txt)
 
     # Init model for metric learning
     print('Loading model...')
@@ -289,20 +274,11 @@ def train(eps_improving=0.0005, save_every=50, use_tensorboard=True):
     elif not os.path.exists('./metric_learning'):
         os.mkdir('./metric_learning')
 
-    print('Starting to load data...')
-    trainset = TrainDataset(images_path, annotations_path, train_txt, model)
-    trainset_source = torch.utils.data.DataLoader(trainset, batch_size=BATCH_SIZE, shuffle=False, num_workers=1, pin_memory=True, drop_last=False)
-
-    valset = EvalDataset(images_path, annotations_path, val_txt)
-    valset_source = torch.utils.data.DataLoader(valset, batch_size=1, shuffle=False, num_workers=1, pin_memory=True, drop_last=False)
-
-    #testset = EvalDataset(images_path, annotations_path, test_txt)
-    #testset_source = torch.utils.data.DataLoader(testset, batch_size=1, shuffle=False, num_workers=1, pin_memory=True, drop_last=False)
-
-    print('Start training...')
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
-    for it, (img, txt, neg_img, neg_txt, _) in enumerate(tqdm(trainset_source)):
+    print('Start training...')
+    for it, (img, txt, neg_img, neg_txt, _) in enumerate(trainset_source):
+        print(it)
         # Compute loss
         ie = model.img_encoder(img.cuda())
         te =  model.lang_encoder(txt)
@@ -320,23 +296,39 @@ def train(eps_improving=0.0005, save_every=50, use_tensorboard=True):
         optimizer.step()
 
         if it % save_every == 0:
-            mAP_img = 0.0 #TODO: implement mAP calc
-            mAP_txt = 0.0 #TODO: implement mAP calc
-            # for img, phr in validation_split:
-            # ...
-            # ... compute_mAP(match_scores, gt_matrix, mode='i2p')
+            print('start val')
+            # Validation step
+            match_scores = torch.zeros((len(valset), len(valset)))
+            gt_matrix = np.eye(len(valset))
+
+            with torch.no_grad():
+                img_embs = []
+                txt_embs = []
+                for eee, (img, txt, _) in enumerate(valset):
+                    print(eee)
+                    img_embs.append(model.img_encoder(torch.unsqueeze(img, 0).cuda())[0,:])
+                    txt_embs.append(model.lang_encoder(txt)[0,:])
+
+                for i, img_emb_i, in enumerate(img_embs):
+                    for j, txt_emb_j in enumerate(txt_embs):
+                        match_scores[i,j] = ((torch.dot(img_emb_i, txt_emb_j) / (torch.linalg.norm(img_emb_i) * torch.linalg.norm(txt_emb_j)))+1)
+
+            match_scores = match_scores.cpu()
+
+            mAP_img = compute_mAP(match_scores, gt_matrix, mode='i2p')
+            mAP_txt = compute_mAP(match_scores, gt_matrix, mode='p2i') 
 
             if (mAP_img + mAP_txt) / 2 > eps_improving:
                 torch.save(model.state_dict(), model_path)
 
             if use_tensorboard:
                 writer.add_scalar('Improvement', (mAP_img + mAP_txt) / 2, it)
-                writer.add_scalar('Improvement', eps_improving, it)
                 writer.add_scalar('mAP_img/val', mAP_img, it)
                 writer.add_scalar('mAP_txt/val', mAP_txt, it)
+            print('done val')
 
     if use_tensorboard: writer.close()
 
 if __name__ == '__main__':
     train()
-    #plot_clouds()
+    #test()
