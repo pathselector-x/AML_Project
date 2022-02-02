@@ -5,10 +5,8 @@ import torch.utils.data
 from torch.utils.tensorboard import SummaryWriter
 import torchvision.transforms as transforms
 import numpy as np
-from tqdm import tqdm
 from model.triplet_match.model import TripletMatch
 from PIL import Image
-import matplotlib.pyplot as plt
 import random
 
 def cosine_sim(a,b):
@@ -247,8 +245,8 @@ def train_val_test_split(annotations_path, train_pctg=0.6, val_pctg=0.2, test_pc
     return train_txt, val_txt, test_txt
 
 #! Implementation of the Metric Learning Approach
-def train(eps_improving=0.0005, save_every=50, use_tensorboard=True):
-    BATCH_SIZE = 4
+def train(eps_improving=0.0005, save_every=300, use_tensorboard=True):
+    BATCH_SIZE = 16
     LR = 0.0001
     model_path = 'metric_learning/weights.pth'
     if use_tensorboard: writer = SummaryWriter()
@@ -276,9 +274,11 @@ def train(eps_improving=0.0005, save_every=50, use_tensorboard=True):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR)
 
+    last_improvement = 0.0
+
     print('Start training...')
     for it, (img, txt, neg_img, neg_txt, _) in enumerate(trainset_source):
-        print(it)
+        #print(it)
         # Compute loss
         ie = model.img_encoder(img.cuda())
         te =  model.lang_encoder(txt)
@@ -296,35 +296,36 @@ def train(eps_improving=0.0005, save_every=50, use_tensorboard=True):
         optimizer.step()
 
         if it % save_every == 0:
-            print('start val')
+            print(f'start val {it}', end=' - ')
             # Validation step
             match_scores = torch.zeros((len(valset), len(valset)))
             gt_matrix = np.eye(len(valset))
-
+            
             with torch.no_grad():
                 img_embs = []
                 txt_embs = []
                 for eee, (img, txt, _) in enumerate(valset):
-                    print(eee)
+                    #print(eee)
                     img_embs.append(model.img_encoder(torch.unsqueeze(img, 0).cuda())[0,:])
                     txt_embs.append(model.lang_encoder(txt)[0,:])
-
+            
                 for i, img_emb_i, in enumerate(img_embs):
                     for j, txt_emb_j in enumerate(txt_embs):
                         match_scores[i,j] = ((torch.dot(img_emb_i, txt_emb_j) / (torch.linalg.norm(img_emb_i) * torch.linalg.norm(txt_emb_j)))+1)
-
+            
             match_scores = match_scores.cpu()
-
+            
             mAP_img = compute_mAP(match_scores, gt_matrix, mode='i2p')
             mAP_txt = compute_mAP(match_scores, gt_matrix, mode='p2i') 
-
-            if (mAP_img + mAP_txt) / 2 > eps_improving:
+            
+            if abs(((mAP_img + mAP_txt) / 2) - last_improvement) > eps_improving:
                 torch.save(model.state_dict(), model_path)
-
+            
             if use_tensorboard:
                 writer.add_scalar('Improvement', (mAP_img + mAP_txt) / 2, it)
                 writer.add_scalar('mAP_img/val', mAP_img, it)
                 writer.add_scalar('mAP_txt/val', mAP_txt, it)
+            last_improvement = (mAP_img + mAP_txt) / 2
             print('done val')
 
     if use_tensorboard: writer.close()
