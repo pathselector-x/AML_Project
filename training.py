@@ -193,9 +193,10 @@ def test():
     images_path = 'PACS/kfold/'
     annotations_path = 'datalabels/'
 
-    _, _, test_txt = train_val_test_split('datalabels/')
+    _, val_txt, test_txt = train_val_test_split('datalabels/')
 
     print('Starting to load data...')
+    valset = EvalDataset(images_path, annotations_path, val_txt)
     testset = EvalDataset(images_path, annotations_path, test_txt)
     
     # Init model for metric learning
@@ -207,24 +208,56 @@ def test():
         model.load_state_dict(torch.load(model_path), strict=False)
     model.eval()
 
-    match_scores = np.zeros((len(testset), len(testset)))
-    gt_matrix = np.eye(len(testset))
-
-    for i, (img_i, _, _) in enumerate(testset):
-        for j, (_, txt_j, _) in enumerate(testset):
-            match_scores[i,j] = cosine_sim(model.img_encoder(img_i.cuda()).cpu(), model.lang_encoder(txt_j).cpu())
-            
+    print('Start Validation/Test...')
+    match_scores = torch.zeros((len(valset), len(valset)))
+    gt_matrix = np.eye(len(valset))
+    
+    with torch.no_grad():
+        img_embs = []
+        txt_embs = []
+        for eee, (img, txt, _) in enumerate(valset):
+            #print(eee)
+            img_embs.append(model.img_encoder(torch.unsqueeze(img, 0).cuda())[0,:])
+            txt_embs.append(model.lang_encoder(txt)[0,:])
+    
+        for i, img_emb_i, in enumerate(img_embs):
+            for j, txt_emb_j in enumerate(txt_embs):
+                match_scores[i,j] = ((torch.dot(img_emb_i, txt_emb_j) / (torch.linalg.norm(img_emb_i) * torch.linalg.norm(txt_emb_j)))+1)
+    
+    match_scores = match_scores.cpu()
+    
     mAP_img = compute_mAP(match_scores, gt_matrix, mode='i2p')
-    mAP_txt = compute_mAP(match_scores, gt_matrix, mode='p2i')
-    print(f'mAP_img: {mAP_img:.5f}, mAP_txt: {mAP_txt:.5f}, AVG: {((mAP_img + mAP_txt) / 2):.5f}')
+    mAP_txt = compute_mAP(match_scores, gt_matrix, mode='p2i') 
+    print(f'[VAL ] mAP_img: {mAP_img:.5f}, mAP_txt: {mAP_txt:.5f}, AVG: {((mAP_img + mAP_txt) / 2):.5f}')
+
+    match_scores = torch.zeros((len(testset), len(testset)))
+    gt_matrix = np.eye(len(testset))
+    
+    with torch.no_grad():
+        img_embs = []
+        txt_embs = []
+        for eee, (img, txt, _) in enumerate(testset):
+            #print(eee)
+            img_embs.append(model.img_encoder(torch.unsqueeze(img, 0).cuda())[0,:])
+            txt_embs.append(model.lang_encoder(txt)[0,:])
+    
+        for i, img_emb_i, in enumerate(img_embs):
+            for j, txt_emb_j in enumerate(txt_embs):
+                match_scores[i,j] = ((torch.dot(img_emb_i, txt_emb_j) / (torch.linalg.norm(img_emb_i) * torch.linalg.norm(txt_emb_j)))+1)
+    
+    match_scores = match_scores.cpu()
+    
+    mAP_img = compute_mAP(match_scores, gt_matrix, mode='i2p')
+    mAP_txt = compute_mAP(match_scores, gt_matrix, mode='p2i') 
+    print(f'[TEST] mAP_img: {mAP_img:.5f}, mAP_txt: {mAP_txt:.5f}, AVG: {((mAP_img + mAP_txt) / 2):.5f}')
     #TODO: qualche grafico 'interessante'
 
 def MLTLoss(ie, te, nie, nte, BATCH_SIZE):
-    positive_norm = torch.pow(torch.norm(ie - te, p=2), 2)
-    ie_nte_norm = torch.pow(torch.norm(ie - nte), 2)
-    nie_te_norm = torch.pow(torch.norm(nie - te), 2)
-    Lp = torch.max(torch.tensor(0, device='cuda:0'), 1 + positive_norm - ie_nte_norm)
-    Li = torch.max(torch.tensor(0, device='cuda:0'), 1 + positive_norm - nie_te_norm)
+    positive_norm = torch.pow(torch.norm(ie - te, p=2, dim=1), 2)
+    ie_nte_norm = torch.pow(torch.norm(ie - nte, p=2, dim=1), 2)
+    nie_te_norm = torch.pow(torch.norm(nie - te, p=2, dim=1), 2)
+    Lp = torch.maximum(torch.zeros(BATCH_SIZE, device='cuda:0'), torch.ones(BATCH_SIZE, device='cuda:0') + positive_norm - ie_nte_norm)
+    Li = torch.maximum(torch.zeros(BATCH_SIZE, device='cuda:0'), torch.ones(BATCH_SIZE, device='cuda:0') + positive_norm - nie_te_norm)
     return torch.sum(Lp + Li) / BATCH_SIZE
 
 def train_val_test_split(annotations_path, train_pctg=0.6, val_pctg=0.2, test_pctg=0.2):
