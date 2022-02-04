@@ -278,7 +278,7 @@ def train_val_test_split(annotations_path, train_pctg=0.6, val_pctg=0.2, test_pc
     return train_txt, val_txt, test_txt
 
 #! Implementation of the Metric Learning Approach
-def train(eps_improving=0.0005, save_every=300, use_tensorboard=True):
+def train(eps_improving=0.00001, save_every=300, use_tensorboard=True):
     BATCH_SIZE = 16
     LR = 0.0001
     model_path = 'metric_learning/weights.pth'
