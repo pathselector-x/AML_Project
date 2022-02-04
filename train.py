@@ -6,6 +6,7 @@ import torchvision.transforms as transforms
 import numpy as np
 from model.triplet_match.model import TripletMatch
 from PIL import Image
+import random
 
 def cosine_sim(a,b):
     return ((np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))+1)
@@ -35,15 +36,16 @@ class TrainDataset(torch.utils.data.Dataset):
         self.descr = []
         self.visual_domain = []
         for path in sample_list:
-            self.images.append(torch.unsqueeze(self.img_transform(Image.open(images_path + path.split('.txt')[0]).convert('RGB')), dim=0))
+            #self.images.append(torch.unsqueeze(self.img_transform(Image.open(images_path + path.split('.txt')[0]).convert('RGB')), dim=0))
+            self.images.append(Image.open(images_path + path.split('.txt')[0]).convert('RGB'))
             with open(annotations_path + path, 'r') as f:
                 self.descr.append(f.read())
             if 'art_painting' in path: self.visual_domain.append(0)
             elif 'cartoon' in path: self.visual_domain.append(1)
             elif 'photo' in path: self.visual_domain.append(2)
             elif 'sketch' in path: self.visual_domain.append(3)
-        self.t_images = torch.Tensor(len(sample_list), 3, 224, 224)
-        torch.cat(self.images, out=self.t_images)
+        #self.t_images = torch.Tensor(len(sample_list), 3, 224, 224)
+        #torch.cat(self.images, out=self.t_images)
 
     def __len__(self):
         return len(self.images)
@@ -196,12 +198,38 @@ def train_val_test_split(annotations_path, train_pctg=0.6, val_pctg=0.2, test_pc
     return train_txt, val_txt, test_txt
 
 static_idx_counter = 0
-def generate_minibatch(model, trainset, batch_size, mode='hard'):
-    assert mode in ['hard', 'semihard']
+def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
     global static_idx_counter
+    # Random selection
+    if mode == 'random':
+        pos_indices = [(x + static_idx_counter) % len(trainset) for x in range(batch_size)]
+        static_idx_counter = (static_idx_counter + batch_size) % len(trainset)
+        pos_images = []
+        pos_phrase = []
+        neg_images = []
+        neg_phrase = []
+        for idx in pos_indices:
+            pos_images.append(trainset.images[idx])
+            pos_phrase.append(trainset.descr[idx])
+            pos_vd = trainset.visual_domain[idx]
+            i = None
+            while i is None or trainset.visual_domain[i] == pos_vd:
+                i = random.choice(range(len(trainset)))
+            neg_images.append(trainset.images[i])
+            i = None
+            while i is None or trainset.visual_domain[i] == pos_vd:
+                i = random.choice(range(len(trainset)))
+            neg_phrase.append(trainset.descr[i])
+        
+        t_pos_images = torch.Tensor(batch_size, 3, 224, 224)
+        t_neg_images = torch.Tensor(batch_size, 3, 224, 224)
+        torch.cat(pos_images, out=t_pos_images)
+        torch.cat(neg_images, out=t_neg_images)
+        return t_pos_images, pos_phrase, t_neg_images, neg_phrase
+
     # Semi-hard negative mining
     #TODO
-    if mode == 'semihard':
+    elif mode == 'semihard':
         pass
 
     # Online hard-negative mining
@@ -247,9 +275,58 @@ def generate_minibatch(model, trainset, batch_size, mode='hard'):
             torch.cat(neg_images, out=t_neg_images)
             return t_pos_images, pos_phrase, t_neg_images, neg_phrase
 
+    # Batch hard mining
+    elif mode == 'batchhard':
+        with torch.no_grad():
+            imgs = []
+            for img in trainset.images:
+                imgs.append(torch.unsqueeze(trainset.img_transform(img), dim=0))
+            t_images = torch.Tensor(len(trainset), 3, 224, 224)
+            torch.cat(imgs, out=t_images)
+            
+            out_img = model.img_encoder(t_images.cuda()).cpu()
+            out_txt = model.lang_encoder(trainset.descr).cpu()
+            
+            pos, pos_indices = torch.norm(out_img - out_txt, p=2, dim=1).sort()
+            pos_indices = pos_indices[-batch_size:]
+
+            pos_images = []
+            pos_phrase = []
+            neg_images = []
+            neg_phrase = []
+            for idx in pos_indices:
+                pos_images.append(torch.unsqueeze(t_images[idx], dim=0).cpu())
+                pos_phrase.append(trainset.descr[idx])
+                f_pos_i = out_img[idx]
+                f_pos_p = out_txt[idx]
+                
+                pos_vd = trainset.visual_domain[idx]
+                pos_i_neg_p = []
+                pos_p_neg_i = []
+                for i in range(len(trainset)):
+                    if trainset.visual_domain[i] == pos_vd: 
+                        pos_i_neg_p.append(np.inf)
+                        pos_p_neg_i.append(np.inf)
+                        continue
+                    pos_i_neg_p.append(np.linalg.norm((f_pos_i - out_txt[i]).numpy(), ord=2))
+                    pos_p_neg_i.append(np.linalg.norm((out_img[i] - f_pos_p).numpy(), ord=2))
+
+                neg_p_idx = [x for _, x in sorted(zip(pos_i_neg_p, range(len(pos_i_neg_p))))][0]
+                neg_i_idx = [x for _, x in sorted(zip(pos_p_neg_i, range(len(pos_p_neg_i))))][0]
+                neg_images.append(torch.unsqueeze(t_images[neg_i_idx], dim=0).cpu())
+                neg_phrase.append(trainset.descr[neg_p_idx])
+            
+            t_pos_images = torch.Tensor(batch_size, 3, 224, 224)
+            t_neg_images = torch.Tensor(batch_size, 3, 224, 224)
+            torch.cat(pos_images, out=t_pos_images)
+            torch.cat(neg_images, out=t_neg_images)
+            return t_pos_images, pos_phrase, t_neg_images, neg_phrase
+    else:
+        raise NotImplementedError
+
 def train(use_tensorboard=True):
     batch_size=16
-    mode='hard'
+    mode='batchhard'
     val_every=20
 
     init_lr=0.0001
