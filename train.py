@@ -10,16 +10,27 @@ from PIL import Image
 def cosine_sim(a,b):
     return ((np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))+1)
 
-def get_transform():
-    img_tr = [transforms.Resize(256),
-              transforms.CenterCrop(224),
-              transforms.ToTensor(),
-              transforms.Normalize([0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])]
-    return transforms.Compose(img_tr)
+def build_transforms(is_train=True):
+    # follow the transforms in `pytorch/examples/imagenet`:line 202
+
+    normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+                                     std=[0.229, 0.224, 0.225])
+    if is_train:
+        return transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            normalize])
+    else:
+        return transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            normalize])
 
 class TrainDataset(torch.utils.data.Dataset):
     def __init__(self, sample_list, images_path='./PACS/kfold/', annotations_path='./datalabels/'):
-        self.img_transform = get_transform()
+        self.img_transform = build_transforms()
         self.images = []
         self.descr = []
         self.visual_domain = []
@@ -39,7 +50,7 @@ class TrainDataset(torch.utils.data.Dataset):
 
 class EvalDataset(torch.utils.data.Dataset): # both for validation, test -> return (pos_img, pos_txt)
     def __init__(self, sample_list, images_path='./PACS/kfold/', annotations_path='./datalabels/'):
-        self.img_transformer = get_transform()
+        self.img_transformer = build_transforms(is_train=False)
         self.indexes = {'art_painting': [], 'cartoon': [], 'photo': [], 'sketch': []}
         self.images = []
         self.descr = []
@@ -167,14 +178,6 @@ def compute_mAP(match_scores, gt_matrix, mode='i2p'):
     # calculate mAP
     return mean_average_precision(retrieve_binary_lists)
 
-def MLTLoss(ie, te, nie, nte, BATCH_SIZE):
-    positive_norm = torch.pow(torch.norm(ie - te, p=2, dim=1), 2)
-    ie_nte_norm = torch.pow(torch.norm(ie - nte, p=2, dim=1), 2)
-    nie_te_norm = torch.pow(torch.norm(nie - te, p=2, dim=1), 2)
-    Lp = torch.maximum(torch.zeros(BATCH_SIZE, device='cuda:0'), torch.ones(BATCH_SIZE, device='cuda:0') + positive_norm - ie_nte_norm)
-    Li = torch.maximum(torch.zeros(BATCH_SIZE, device='cuda:0'), torch.ones(BATCH_SIZE, device='cuda:0') + positive_norm - nie_te_norm)
-    return torch.sum(Lp + Li) / BATCH_SIZE
-
 def train_val_test_split(annotations_path, train_pctg=0.6, val_pctg=0.2, test_pctg=0.2):
     assert np.isclose(train_pctg + val_pctg + test_pctg, 1.0)
     train_txt, val_txt, test_txt = [], [], []
@@ -192,21 +195,25 @@ def train_val_test_split(annotations_path, train_pctg=0.6, val_pctg=0.2, test_pc
                 else: test_txt.append(domain + '/' + cat + '/' + file)
     return train_txt, val_txt, test_txt
 
+static_idx_counter = 0
 def generate_minibatch(model, trainset, batch_size, mode='hard'):
     assert mode in ['hard', 'semihard']
+    global static_idx_counter
     # Semi-hard negative mining
     #TODO
     if mode == 'semihard':
         pass
 
-    # Online hard mining
+    # Online hard-negative mining
     elif mode == 'hard':
         with torch.no_grad():
             out_img = model.img_encoder(trainset.t_images.cuda()).cpu()
             out_txt = model.lang_encoder(trainset.descr).cpu()
             
-            pos, pos_indices = torch.norm(out_img - out_txt, p=2, dim=1).sort()
-            pos_indices = pos_indices[-batch_size:]
+            #pos, pos_indices = torch.norm(out_img - out_txt, p=2, dim=1).sort()
+            #pos_indices = pos_indices[-batch_size:]
+            pos_indices = [(x + static_idx_counter) % len(trainset) for x in range(batch_size)]
+            static_idx_counter = (static_idx_counter + batch_size) % len(trainset)
 
             pos_images = []
             pos_phrase = []
@@ -240,8 +247,20 @@ def generate_minibatch(model, trainset, batch_size, mode='hard'):
             torch.cat(neg_images, out=t_neg_images)
             return t_pos_images, pos_phrase, t_neg_images, neg_phrase
 
-def train(eps_improving=0.0001, lr=0.0001, val_every=20, batch_size=16, mode='hard', use_tensorboard=True):
-    model_path = 'metric_learning/weights.pth'
+def train(use_tensorboard=True):
+    batch_size=16
+    mode='hard'
+    val_every=20
+
+    init_lr=0.0001
+    lr_decay_gamma = 0.1
+    lr_decay_eval_count = 10
+
+    weight_decay = 1e-6
+    alpha = 0.8
+    beta = 0.999
+    epsilon = 1e-8
+
     train_list, val_list, _ = train_val_test_split('datalabels/')
     if use_tensorboard: writer = SummaryWriter()
 
@@ -251,25 +270,23 @@ def train(eps_improving=0.0001, lr=0.0001, val_every=20, batch_size=16, mode='ha
     model = TripletMatch()
     model.cuda()
 
-    #if os.path.exists(model_path):
-    #    model.load_state_dict(torch.load(model_path), strict=False)
-    #elif not os.path.exists('./metric_learning'):
-    #    os.mkdir('./metric_learning')
+    if os.path.exists('metric_learning/LAST_checkpoint.pth'):
+        model.load_state_dict(torch.load('metric_learning/LAST_checkpoint.pth'), strict=False)
+    elif not os.path.exists('./metric_learning'):
+        os.mkdir('./metric_learning')
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    optimizer = torch.optim.Adam(model.parameters(), lr=init_lr, weight_decay=weight_decay, betas=(alpha, beta), eps=epsilon)
 
-    last_improvement = 0.0
+    best_eval_metric = 0
+    best_eval_count = 0
     it = 0
     try:
         while True:
+            # Train
             pos_images, pos_phrase, neg_images, neg_phrase = generate_minibatch(model, trainset, batch_size, mode)
 
-            ie = model.img_encoder(pos_images.cuda())
-            te =  model.lang_encoder(pos_phrase)
-            nie = model.img_encoder(neg_images.cuda())
-            nte =  model.lang_encoder(neg_phrase)
-
-            loss = MLTLoss(ie, te, nie, nte, batch_size)
+            neg_img_loss, neg_sent_loss = model(pos_images.cuda(), pos_phrase, neg_images.cuda(), neg_phrase)
+            loss = neg_img_loss + neg_sent_loss
 
             if use_tensorboard: writer.add_scalar('Loss/train', loss, it)
 
@@ -277,6 +294,7 @@ def train(eps_improving=0.0001, lr=0.0001, val_every=20, batch_size=16, mode='ha
             loss.backward()
             optimizer.step()
 
+            # Validation
             if it % val_every == val_every-1:
                 with torch.no_grad():
                     out_img = model.img_encoder(valset.t_images.cuda()).cpu().numpy()
@@ -285,23 +303,28 @@ def train(eps_improving=0.0001, lr=0.0001, val_every=20, batch_size=16, mode='ha
                     gt_matrix = np.eye(len(valset))
                     for i, img in enumerate(out_img):
                         for j, phr in enumerate(out_txt):
-                            match_scores[i,j] = cosine_sim(img, phr)
+                            match_scores[i,j] = - np.sum(np.power(img - phr, 2)) # l2_s
                     
-                    mAP_img = compute_mAP(match_scores, gt_matrix, mode='i2p')
-                    mAP_txt = compute_mAP(match_scores, gt_matrix, mode='p2i') 
+                    mAP_i2p = compute_mAP(match_scores, gt_matrix, mode='i2p')
+                    mAP_p2i = compute_mAP(match_scores, gt_matrix, mode='p2i') 
+
+                    eval_metric = mAP_i2p + mAP_p2i
+                    if eval_metric > best_eval_metric:
+                        best_eval_metric = eval_metric
+                        best_eval_count = 0
+                        torch.save(model.state_dict(), 'metric_learning/BEST_checkpoint.pth')
+                    else:
+                        best_eval_count += 1
+                        torch.save(model.state_dict(), 'metric_learning/LAST_checkpoint.pth')
+
+                    if best_eval_count % lr_decay_eval_count == 0 and best_eval_count > 0:
+                        for param_group in optimizer.param_groups:
+                            param_group['lr'] *= lr_decay_gamma
                     
-                    if abs(((mAP_img + mAP_txt) / 2) - last_improvement) > eps_improving:
-                        torch.save(model.state_dict(), model_path)
-                    
-                    if use_tensorboard:
-                        writer.add_scalar('Improvement', (mAP_img + mAP_txt) / 2, it)
-                        writer.add_scalar('mAP_img/val', mAP_img, it)
-                        writer.add_scalar('mAP_txt/val', mAP_txt, it)
-                    last_improvement = (mAP_img + mAP_txt) / 2
+                    if use_tensorboard: writer.add_scalar('Improvement', eval_metric, it)
             it += 1
 
     except KeyboardInterrupt:
-        torch.save(model.state_dict(), model_path)
         writer.close()
     
 if __name__ == '__main__':
