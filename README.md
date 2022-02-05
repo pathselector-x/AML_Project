@@ -1,9 +1,9 @@
 # Advanced Machine Learning Project - Domain-To-Text 
 
 ### Assignment submission by:
-### - 291018
-### - 287639
-### - 282870
+### - 291018 Leonardo Iurada
+### - 287639 Andrea Di Domenico
+### - 282870 Stefano Strippoli
 
 # General Info
 
