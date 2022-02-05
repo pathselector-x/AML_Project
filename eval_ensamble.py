@@ -29,7 +29,7 @@ def cosine_sim(a,b):
 # Training settings
 parser = argparse.ArgumentParser(description='PyTorch Implementation')
 
-parser.add_argument('--target', type=str, default='Photo', metavar='N', help='target dataset')
+parser.add_argument('--target', type=str, default='ArtPainting', metavar='N', help='target dataset')
 parser.add_argument('--path_to_txt', type=str,default='./data/PACS', help='path to the txt files')
 parser.add_argument('--path_to_dataset', type=str, default='./',help='path to the dataset')
 parser.add_argument('--num_classes', type=int, default=7, help='size for the crop')
@@ -98,7 +98,7 @@ def main():
     vec_dim = 256
     resnet101_texture_model = TripletMatch(vec_dim=vec_dim,distance='cos', img_feats=(2, 4))
     #model_path = 'outputs/triplet_match/BEST_checkpoint.pth'
-    model_path = 'metric_learning/BEST_checkpoint.pth'
+    model_path = 'metric_learning/549_BEST_checkpoint.pth'
 
     resnet101_texture_model = resnet101_texture_model.cuda()
     resnet101_texture_model.load_state_dict(torch.load(model_path), strict=False)

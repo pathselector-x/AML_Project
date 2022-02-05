@@ -12,8 +12,6 @@ def cosine_sim(a,b):
     return ((np.dot(a, b) / (np.linalg.norm(a) * np.linalg.norm(b)))+1)
 
 def build_transforms(is_train=True):
-    # follow the transforms in `pytorch/examples/imagenet`:line 202
-
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     if is_train:
@@ -36,7 +34,6 @@ class TrainDataset(torch.utils.data.Dataset):
         self.descr = []
         self.visual_domain = []
         for path in sample_list:
-            #self.images.append(torch.unsqueeze(self.img_transform(Image.open(images_path + path.split('.txt')[0]).convert('RGB')), dim=0))
             self.images.append(Image.open(images_path + path.split('.txt')[0]).convert('RGB'))
             with open(annotations_path + path, 'r') as f:
                 self.descr.append(f.read())
@@ -44,8 +41,6 @@ class TrainDataset(torch.utils.data.Dataset):
             elif 'cartoon' in path: self.visual_domain.append(1)
             elif 'photo' in path: self.visual_domain.append(2)
             elif 'sketch' in path: self.visual_domain.append(3)
-        #self.t_images = torch.Tensor(len(sample_list), 3, 224, 224)
-        #torch.cat(self.images, out=self.t_images)
 
     def __len__(self):
         return len(self.images)
@@ -198,7 +193,7 @@ def train_val_test_split(annotations_path, train_pctg=0.6, val_pctg=0.2, test_pc
     return train_txt, val_txt, test_txt
 
 static_idx_counter = 0
-def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
+def generate_minibatch(model, trainset, batch_size, mode='batch_hard'):
     global static_idx_counter
     # Random selection
     if mode == 'random':
@@ -233,7 +228,7 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
         return t_pos_images, pos_phrase, t_neg_images, neg_phrase
 
     # Online hard-negative mining
-    elif mode == 'hard':
+    elif mode == 'hard_negative':
         with torch.no_grad():
             imgs = []
             for img in trainset.images:
@@ -280,7 +275,7 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
             return t_pos_images, pos_phrase, t_neg_images, neg_phrase
 
     # Batch hard mining
-    elif mode == 'batchhard':
+    elif mode == 'batch_hard':
         with torch.no_grad():
             imgs = []
             for img in trainset.images:
@@ -330,11 +325,11 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
 
 def train(use_tensorboard=True):
     batch_size=16
-    mode='hard'
+    mode='batch_hard'
     val_every=20
 
-    #init_lr=0.0000006
-    init_lr=0.000002
+    #init_lr=0.000002 # for hard-negative
+    init_lr=0.00001 # for batch-hard
     lr_decay_gamma = 0.1
     lr_decay_eval_count = 10
 
@@ -411,7 +406,31 @@ def train(use_tensorboard=True):
         writer.close()
 
 def test():
-    pass
+    _, _, test_list = train_val_test_split('datalabels/')
+    testset = EvalDataset(test_list)
+
+    model = TripletMatch()
+    model.cuda()
+    model.eval()
+
+    if os.path.exists('metric_learning/549_BEST_checkpoint.pth'):
+        model.load_state_dict(torch.load('metric_learning/549_BEST_checkpoint.pth'), strict=False)
+
+    with torch.no_grad():
+        out_img = model.img_encoder(testset.t_images.cuda()).cpu().numpy()
+        out_txt = model.lang_encoder(testset.descr).cpu().numpy()
+        match_scores = np.zeros((len(testset), len(testset)))
+        gt_matrix = np.eye(len(testset))
+        for i, img in enumerate(out_img):
+            for j, phr in enumerate(out_txt):
+                match_scores[i,j] = - np.sum(np.power(img - phr, 2)) # l2_s
+
+        mAP_i2p = compute_mAP(match_scores, gt_matrix, mode='i2p')
+        mAP_p2i = compute_mAP(match_scores, gt_matrix, mode='p2i') 
+
+        eval_metric = mAP_i2p + mAP_p2i
+        print(f'mAP on test set: {eval_metric:.3f}')
 
 if __name__ == '__main__':
-    train()
+    #train()
+    test()

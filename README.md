@@ -19,10 +19,12 @@ Then, you have to put the "outputs" folder in this directory
 
 ## Torch "bug"
 
-For some reason torch==1.4.0 is too old to pull pretrained models from pytorch hub, so we used torch==1.9.0 (which comes with torchvision==0.10.0 and has CUDA 10.2 support). The rest of the requirements (specified in *_requirements.txt_*) are fine.
+For some reason torch==1.4.0 is too old to pull pretrained models from pytorch hub, so we used torch==1.9.0 (which comes with torchvision==0.10.0 and has CUDA 11.1 support for RTX). The rest of the requirements (specified in *_requirements.txt_*) are fine.
+
+(We also used tensorboard so make sure to have it installed via *_pip install tensorboard_*)
 
 ## Data labels
-Labels containing visual descriptions of the appearance and the style of each image are in *_datalabels_* folder (each text file is a label, the path to each text file mimics the path of the corresponding image in the PACS folder). Each label describes in order:
+Labels containing visual descriptions of the appearance and the style of each image are in *_'./datalabels/_* folder (each text file is a label, the path to each text file mimics the path of the corresponding image in the PACS folder). Each label describes in order:
 ```
 Level of details
 Edges
@@ -36,7 +38,9 @@ Perspective
 ```
 
 ## Finetuned model weights with the new dataset
-TODO
+Create a folder *_'./metric_learning/'_*, download from the link below the file *_'549_BEST_checkpoint.pth'_* and put it inside the created folder.
+
+Download link: https://drive.google.com/file/d/1oXyCr_bkqzcdoJhbTWn6srUNHe2FXt9s/view?usp=sharing
 
 # Original README
 
