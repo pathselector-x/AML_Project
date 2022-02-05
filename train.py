@@ -202,6 +202,11 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
     global static_idx_counter
     # Random selection
     if mode == 'random':
+        imgs = []
+        for img in trainset.images:
+            imgs.append(torch.unsqueeze(trainset.img_transform(img), dim=0))
+        t_images = torch.Tensor(len(trainset), 3, 224, 224)
+        torch.cat(imgs, out=t_images)
         pos_indices = [(x + static_idx_counter) % len(trainset) for x in range(batch_size)]
         static_idx_counter = (static_idx_counter + batch_size) % len(trainset)
         pos_images = []
@@ -209,13 +214,13 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
         neg_images = []
         neg_phrase = []
         for idx in pos_indices:
-            pos_images.append(trainset.images[idx])
+            pos_images.append(torch.unsqueeze(t_images[idx], dim=0).cpu())
             pos_phrase.append(trainset.descr[idx])
             pos_vd = trainset.visual_domain[idx]
             i = None
             while i is None or trainset.visual_domain[i] == pos_vd:
                 i = random.choice(range(len(trainset)))
-            neg_images.append(trainset.images[i])
+            neg_images.append(torch.unsqueeze(t_images[i], dim=0).cpu())
             i = None
             while i is None or trainset.visual_domain[i] == pos_vd:
                 i = random.choice(range(len(trainset)))
@@ -227,19 +232,18 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
         torch.cat(neg_images, out=t_neg_images)
         return t_pos_images, pos_phrase, t_neg_images, neg_phrase
 
-    # Semi-hard negative mining
-    #TODO
-    elif mode == 'semihard':
-        pass
-
     # Online hard-negative mining
     elif mode == 'hard':
         with torch.no_grad():
-            out_img = model.img_encoder(trainset.t_images.cuda()).cpu()
+            imgs = []
+            for img in trainset.images:
+                imgs.append(torch.unsqueeze(trainset.img_transform(img), dim=0))
+            t_images = torch.Tensor(len(trainset), 3, 224, 224)
+            torch.cat(imgs, out=t_images)
+
+            out_img = model.img_encoder(t_images.cuda()).cpu()
             out_txt = model.lang_encoder(trainset.descr).cpu()
             
-            #pos, pos_indices = torch.norm(out_img - out_txt, p=2, dim=1).sort()
-            #pos_indices = pos_indices[-batch_size:]
             pos_indices = [(x + static_idx_counter) % len(trainset) for x in range(batch_size)]
             static_idx_counter = (static_idx_counter + batch_size) % len(trainset)
 
@@ -248,7 +252,7 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
             neg_images = []
             neg_phrase = []
             for idx in pos_indices:
-                pos_images.append(trainset.images[idx])
+                pos_images.append(torch.unsqueeze(t_images[idx], dim=0).cpu())
                 pos_phrase.append(trainset.descr[idx])
                 f_pos_i = out_img[idx]
                 f_pos_p = out_txt[idx]
@@ -266,7 +270,7 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
 
                 neg_p_idx = [x for _, x in sorted(zip(pos_i_neg_p, range(len(pos_i_neg_p))))][0]
                 neg_i_idx = [x for _, x in sorted(zip(pos_p_neg_i, range(len(pos_p_neg_i))))][0]
-                neg_images.append(trainset.images[neg_i_idx])
+                neg_images.append(torch.unsqueeze(t_images[neg_i_idx], dim=0).cpu())
                 neg_phrase.append(trainset.descr[neg_p_idx])
             
             t_pos_images = torch.Tensor(batch_size, 3, 224, 224)
@@ -326,10 +330,11 @@ def generate_minibatch(model, trainset, batch_size, mode='batchhard'):
 
 def train(use_tensorboard=True):
     batch_size=16
-    mode='batchhard'
+    mode='hard'
     val_every=20
 
-    init_lr=0.0001
+    #init_lr=0.0000006
+    init_lr=0.000002
     lr_decay_gamma = 0.1
     lr_decay_eval_count = 10
 
@@ -397,12 +402,16 @@ def train(use_tensorboard=True):
                     if best_eval_count % lr_decay_eval_count == 0 and best_eval_count > 0:
                         for param_group in optimizer.param_groups:
                             param_group['lr'] *= lr_decay_gamma
+                            if use_tensorboard: writer.add_scalar('LR/train', param_group['lr'], it)
                     
-                    if use_tensorboard: writer.add_scalar('Improvement', eval_metric, it)
+                    if use_tensorboard: writer.add_scalar('Improvement/train', eval_metric, it)
             it += 1
 
     except KeyboardInterrupt:
         writer.close()
-    
+
+def test():
+    pass
+
 if __name__ == '__main__':
     train()
