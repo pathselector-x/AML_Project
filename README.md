@@ -5,6 +5,8 @@
 ### - 287639 Andrea Di Domenico
 ### - 282870 Stefano Strippoli
 
+### Report for this project is now available in this repo! See _Report.pdf_ file
+
 # General Info
 
 ## PACS path
